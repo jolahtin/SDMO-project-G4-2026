@@ -30,10 +30,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install flake8 pytest
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        cd ${{ matrix.component }}
         pip install pytest
     - name: Run unit tests
       env:
-        PYTHONPATH: ${{ github.workspace }}/${{ matrix.component }}
+        PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/${{ matrix.component }}
       run: |
         cd ${{ matrix.component }}
         pytest
@@ -53,13 +54,13 @@ jobs:
     - name: Install all dependencies
       run: |
         pip install pytest
-        for dir in sensor edge cloud_storage; do
+        for dir in sensor edge common; do
           if [ -f $dir/requirements.txt ]; then pip install -r $dir/requirements.txt; fi
         done
 
     - name: Run E2E Integration Tests
       env:
-        PYTHONPATH: .  # Asettaa juurikansion polkuun, jotta testit voivat importata kaikista kansioista
+        PYTHONPATH: .  
       run: |
         pytest tests/
 
