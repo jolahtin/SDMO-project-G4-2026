@@ -2,7 +2,7 @@ import struct
 import io
 import pytest
 from unittest.mock import Mock
-from edge import receive_exactly, receive_message
+from edge_receiver import receive_exactly, receive_message
 
 def test_receive_exactly():
     
