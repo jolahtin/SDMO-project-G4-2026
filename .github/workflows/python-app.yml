@@ -21,36 +21,34 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    
     - name: Set up Python 3.10
-      uses: actions/setup-python@v5 # Päivitetty v5 (luotettavampi polkujen kanssa)
+      uses: actions/setup-python@v3
       with:
         python-version: "3.10"
-        
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install flake8 pytest
-        cd ${{ matrix.component }}
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
+        cd ${{ matrix.component }}
+        pip install pytest
     - name: Run unit tests
       env:
-        # Pidetään PYTHONPATH vain testattavassa komponentissa ja juuritasolla moduulihakuja varten
-        PYTHONPATH: ${{ github.workspace }}
+        PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/${{ matrix.component }}
       run: |
         cd ${{ matrix.component }}
-        if [ -d "tests" ]; then
+        pytest
+         if [ -d "tests" ]; then
           echo "Folder tests/ found for component ${{ matrix.component }}. Running tests..."
-          pytest ./tests
-        else
+          pytest
+         else
           echo "Component ${{ matrix.component }} has no tests."
-        fi
+         fi
 
   integration-test:
     needs: unit-tests
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -59,10 +57,8 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: "3.10"
-        
     - name: Install all dependencies
       run: |
-        python -m pip install --upgrade pip
         pip install pytest
         for dir in sensor edge common; do
           if [ -f $dir/requirements.txt ]; then pip install -r $dir/requirements.txt; fi
@@ -70,10 +66,7 @@ jobs:
 
     - name: Run E2E Integration Tests
       env:
-        PYTHONPATH: ${{ github.workspace }}
+        PYTHONPATH: .  
       run: |
-        if ls tests/test_*.py 1> /dev/null 2>&1; then
-          pytest tests/
-        else
-          echo "No integration tests found in juuri/tests/. Skipping."
+        pytest tests/
         fi
