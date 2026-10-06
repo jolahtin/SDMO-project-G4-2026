@@ -16,9 +16,9 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
-      strategy:
-        matrix:
-          component: [sensor, edge, common]
+    strategy:
+      matrix:
+        component: [sensor, edge, common]
 
     steps:
     - uses: actions/checkout@v4
