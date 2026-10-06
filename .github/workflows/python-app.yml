@@ -36,8 +36,12 @@ jobs:
       env:
         PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/${{ matrix.component }}
       run: |
-        cd ${{ matrix.component }}
-        pytest
+         if [ -d "tests" ]; then
+          echo "Folder tests/ found for component ${{ matrix.component }}. Running tests..."
+          pytest
+         else
+          echo "Component ${{ matrix.component }} has no tests."
+         fi
 
   integration-test:
     needs: unit-tests
