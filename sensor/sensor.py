@@ -1,9 +1,13 @@
 import argparse
+import json
 import logging
 import socket
 import time
 import wave
 from pathlib import Path
+import uuid
+import hashlib
+import base64
 
 from common.crypto import load_key, encrypt
 from common.protocol import send_message
@@ -14,6 +18,7 @@ PORT = 5000
 
 CHUNK_SIZE = 4096
 SEND_DELAY = 0.05
+
 
 
 logging.basicConfig(
@@ -28,10 +33,17 @@ def run_sensor(audio_file: Path) -> None:
     """Read audio data and send encrypted chunks."""
 
     key = load_key()
+    hash_object = hashlib.sha256()
+    session_id = str(uuid.uuid4())
 
     logger.info(
         "Using audio file: %s",
         audio_file,
+    )
+
+    logger.info(
+        "Session ID: %s",
+        session_id,
     )
 
     with wave.open(
@@ -62,6 +74,22 @@ def run_sensor(audio_file: Path) -> None:
                 PORT,
             )
 
+            start_payload = {
+                "type": "start",
+                "session_id": session_id,
+            }
+
+            send_message(
+                sock,
+                json.dumps(
+                    start_payload
+                ).encode("utf-8")
+            )
+
+            logger.info(
+                "Sent START message"
+            )
+
             chunk_number = 0
 
             while True:
@@ -72,14 +100,28 @@ def run_sensor(audio_file: Path) -> None:
                 if not raw_data:
                     break
 
+                hash_object.update(raw_data)
+
                 encrypted_data = encrypt(
                     raw_data,
                     key,
                 )
 
+                data_payload = {
+                    "type": "data",
+                    "session_id": session_id,
+                    "encrypted_data": base64.b64encode(
+                        encrypted_data
+                    ).decode("ascii"),
+                }
+
+                message = json.dumps(
+                    data_payload
+                ).encode("utf-8")
+
                 send_message(
                     sock,
-                    encrypted_data,
+                    message,
                 )
 
                 chunk_number += 1
@@ -97,10 +139,30 @@ def run_sensor(audio_file: Path) -> None:
                     SEND_DELAY
                 )
 
-            # Zero-length message means finished.
+            original_sha256 = (
+                hash_object.hexdigest()
+            )
+
+            logger.info(
+                "Original data SHA-256: %s",
+                original_sha256,
+            )
+
+            end_payload = {
+                "type": "end",
+                "session_id": session_id,
+                "original_sha256": original_sha256,
+            }
+
             send_message(
                 sock,
-                b"",
+                json.dumps(
+                    end_payload
+                ).encode("utf-8"),
+            )
+
+            logger.info(
+                "Sent END message"
             )
 
             logger.info(

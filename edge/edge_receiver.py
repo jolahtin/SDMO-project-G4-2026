@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 import socket
+import hashlib
 
 from common.crypto import load_key, decrypt
 from common.protocol import (
@@ -24,9 +25,29 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+def send_start_to_cloud(
+        cloud_socket: socket.socket,
+        session_id: str,
+) -> None:
+    """
+    Send START message to the cloud.
+    """
+
+    payload = {
+        "type": "start",
+        "session_id": session_id,
+    }
+
+    send_message(
+        cloud_socket,
+        json.dumps(
+            payload
+        ).encode("utf-8")
+)
 
 def send_to_cloud(
         cloud_socket: socket.socket,
+        session_id: str,
         encrypted_data: bytes,
         decrypted_data: bytes,
 ) -> None:
@@ -38,6 +59,9 @@ def send_to_cloud(
     """
 
     payload = {
+        "type": "data",
+        "session_id": session_id,
+
         "encrypted_data": base64.b64encode(
             encrypted_data
         ).decode("ascii"),
@@ -56,6 +80,29 @@ def send_to_cloud(
         message,
     )
 
+def send_end_to_cloud(
+        cloud_socket: socket.socket,
+        session_id: str,
+        original_sha256: str,
+        edge_sha256: str,
+) -> None:
+    """
+    Send END message and SHA-256 to the cloud.
+    """
+
+    payload = {
+        "type": "end",
+        "session_id": session_id,
+        "original_sha256": original_sha256,
+        "edge_sha256": edge_sha256,
+    }
+
+    send_message(
+        cloud_socket,
+        json.dumps(
+            payload
+        ).encode("utf-8")
+    )
 
 def handle_sensor_connection(
         sensor_socket: socket.socket,
@@ -86,58 +133,190 @@ def handle_sensor_connection(
             )
 
             chunk_number = 0
+            session_id = None
+            # original_sha256 = None
+            edge_hash_object = hashlib.sha256()
 
             while True:
-                encrypted_data = receive_message(
+                message = receive_message(
                     sensor_socket
                 )
 
-                if encrypted_data is None:
-                    logger.info(
-                        "Sensor finished transmission"
+                if message is None:
+                    logger.error(
+                        "Sensor connection closed"
+                        " without END message"
                     )
-
-                    # Tell cloud that transmission is finished.
-                    send_message(
-                        cloud_socket,
-                        b"",
-                    )
-
                     break
 
                 try:
-                    decrypted_data = decrypt(
-                        encrypted_data,
-                        key,
+                    payload = json.loads(
+                        message.decode("utf-8")
                     )
 
-                except ValueError:
+                except json.JSONDecodeError:
                     logger.error(
-                        "Failed to decrypt sensor chunk"
+                        "Received invalid JSON from sensor"
+                    )
+                    break
+
+                message_type = payload.get(
+                    "type"
+                )
+
+                if message_type == "start":
+                    session_id = payload.get(
+                        "session_id"
+                    )
+
+                    if not session_id:
+                        logger.error(
+                            "START message does not contain " 
+                            "a session ID"
+                        )
+                        break
+
+                    logger.info(
+                        "Sensor session started: %s",
+                        session_id,
+                    )
+
+                    send_start_to_cloud(
+                        cloud_socket,
+                        session_id,
                     )
                     continue
 
-                chunk_number += 1
+                if message_type == "data":
+                    message_session_id = payload.get(
+                        "session_id"
+                    )
 
-                logger.info(
-                    "Received sensor chunk %d: "
-                    "%d encrypted bytes -> "
-                    "%d decrypted bytes",
-                    chunk_number,
-                    len(encrypted_data),
-                    len(decrypted_data),
-                )
+                    if message_session_id != session_id:
+                        logger.error(
+                            "Session ID mismatch in DATA message"
+                        )
+                        break
 
-                send_to_cloud(
-                    cloud_socket,
-                    encrypted_data,
-                    decrypted_data,
-                )
+                    try: encrypted_data = (
+                        base64.b64decode(
+                            payload[
+                                "encrypted_data"
+                            ]
+                        )
+                    )
 
-                logger.info(
-                    "Forwarded chunk %d to cloud",
-                    chunk_number,
+                    except (
+                            KeyError,
+                            ValueError,
+                            base64.binascii.Error,
+                    ):
+                        logger.error(
+                            "Invalid encrypted data " 
+                            "in DATA message"
+                        )
+                        break
+
+                    try: decrypted_data = decrypt(
+                        encrypted_data,
+                        key,
+                    )
+                    except ValueError:
+                        logger.error(
+                            "Failed to decrypt " 
+                            "sensor chunk"
+                        )
+                        break
+
+                    edge_hash_object.update(
+                        decrypted_data
+                    )
+
+                    chunk_number += 1
+
+                    logger.info(
+                        "Received sensor chunk %d: " 
+                        "%d encrypted bytes -> " 
+                        "%d decrypted bytes",
+                        chunk_number,
+                        len(encrypted_data),
+                        len(decrypted_data),
+                    )
+
+                    send_to_cloud(
+                        cloud_socket,
+                        session_id,
+                        encrypted_data,
+                        decrypted_data,
+                    )
+
+                    logger.info(
+                        "Forwarded chunk %d to cloud",
+                        chunk_number,
+                    )
+                    continue
+
+                if message_type == "end":
+                    message_session_id = payload.get(
+                        "session_id"
+                    )
+
+                    if message_session_id != session_id:
+                        logger.error(
+                            "Session ID mismatch in END message"
+                        )
+                        break
+
+                    original_sha256 = payload.get(
+                        "original_sha256"
+                    )
+
+                    if not original_sha256:
+                        logger.error(
+                            "END message does not contain " 
+                            "original SHA-256"
+                        )
+                        break
+
+                    edge_sha256 = (
+                        edge_hash_object.hexdigest()
+                    )
+
+                    logger.info(
+                        "Sensor SHA-256: %s",
+                        original_sha256,
+                    )
+                    logger.info(
+                        "Edge SHA-256: %s",
+                        edge_sha256,
+                    )
+
+                    if original_sha256 == edge_sha256:
+                        logger.info(
+                            "Sensor and Edge SHA-256 match"
+                        )
+
+                    else: logger.error(
+                        "Sensor and Edge SHA-256 mismatch"
+                    )
+
+                    send_end_to_cloud(
+                        cloud_socket,
+                        session_id,
+                        original_sha256,
+                        edge_sha256,
+                    )
+
+                    logger.info(
+                        "Sensor finished transmission"
+                    )
+                    break
+
+                logger.error(
+                    "Unknown message type: %s",
+                    message_type,
                 )
+                break
 
             # Receive cloud confirmation.
             response_data = receive_message(
@@ -145,14 +324,21 @@ def handle_sensor_connection(
             )
 
             if response_data:
-                response = json.loads(
-                    response_data.decode("utf-8")
-                )
+                try:
+                    response = json.loads(
+                        response_data.decode("utf-8")
+                    )
 
-                logger.info(
-                    "Cloud response: %s",
-                    response,
-                )
+                    logger.info(
+                        "Cloud response: %s",
+                        response,
+                    )
+
+                except json.JSONDecodeError:
+                    logger.error(
+                        "Received invalid response from cloud"
+                    )
+
 
     except ConnectionRefusedError:
         logger.error(
