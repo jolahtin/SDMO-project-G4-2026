@@ -1,35 +1,21 @@
-from pathlib import Path 
-from cryptography.fernet import Fernet, InvalidToken 
+import base64
 
-KEY_FILE = Path(__file__).resolve().parent.parent / "secret.key"  
+from cryptography.fernet import Fernet, InvalidToken
 
-def generate_key() -> bytes: 
-    """Generate a new Fernet encryption key.""" 
-    return Fernet.generate_key() 
 
-def save_key(key: bytes) -> None: 
+def fernet_key_from_shared_secret(shared_secret: bytes) -> bytes:
+    if len(shared_secret) != 32:
+        raise ValueError("Expected a 32-byte ML-KEM shared secret")
 
-    """Save the encryption key to a local file.""" 
+    return base64.urlsafe_b64encode(shared_secret)
 
-    KEY_FILE.write_bytes(key) 
 
-def load_key() -> bytes: 
-    """Load the encryption key from the local key file.""" 
-    if not KEY_FILE.exists(): 
-        raise FileNotFoundError( 
-            f"Encryption key not found: {KEY_FILE}" 
-        ) 
-    return KEY_FILE.read_bytes() 
+def encrypt(data: bytes, key: bytes) -> bytes:
+    return Fernet(key).encrypt(data)
 
-def encrypt(data: bytes, key: bytes) -> bytes: 
-    """Encrypt data using Fernet.""" 
-    cipher = Fernet(key) 
-    return cipher.encrypt(data) 
 
-def decrypt(data: bytes, key: bytes) -> bytes: 
-    """Decrypt data using Fernet.""" 
-    cipher = Fernet(key) 
-    try: 
-        return cipher.decrypt(data) 
-    except InvalidToken as exc: 
+def decrypt(data: bytes, key: bytes) -> bytes:
+    try:
+        return Fernet(key).decrypt(data)
+    except InvalidToken as exc:
         raise ValueError("Invalid or corrupted encrypted data") from exc

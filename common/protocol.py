@@ -66,4 +66,3 @@ def receive_message(
         )
 
     return receive_exactly(sock, message_size)
-
